@@ -1,0 +1,188 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+Transform: [ "AWS::Serverless-2016-10-31" ]
+
+Description: ""
+
+Metadata:
+  AWS::ServerlessRepo::Application:
+    Name: cloudwatch-logs-retention
+    Description: Sets retention for all CloudWatch log groups that do not have a retention set.
+    Author: thomasklinger1234
+    SpdxLicenseId: Apache-2.0
+    LicenseUrl: LICENSE.txt
+    ReadmeUrl: README.md
+    Labels: ['devops', 'logs', 'cleanup']
+    HomePageUrl: https://github.com/thomasklinger1234/serverless-cloudwatch-logs-retention
+    SemanticVersion: 1.0.0
+    SourceCodeUrl: https://github.com/thomasklinger1234/serverless-cloudwatch-logs-retention/tree/1.0.0
+
+Parameters:
+  DeploymentPreferenceType:
+    Type: String
+    Default: AllAtOnce  DeploymentEnabled:
+    Type: String
+    Default: false
+    AllowedValues: [ true, false ]
+    Description: If CodeDeploy will be activated (false by default).
+  ScheduleExpression:
+    Type: String
+    Default: rate(6 hours)
+    Description: The rate for the application to execute. Must be a valid CloudWatch expression.
+  ScheduleStatus:
+    Type: String
+    Default: ENABLED
+    AllowedValues: [ ENABLED, DISABLED ]
+    Description: If the CloudWatch rule should be active. ENABLED by default.
+  AlarmActions:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: A list of SNS topic ARNs for alarms.
+  LogGroupNamePrefix:
+    Type: String
+    Default: ""
+  LogRetentionInDays:
+    Type: Number
+    Default: 30
+
+Globals:
+  Function:
+    Runtime: python3.7
+    MemorySize: 128
+    Timeout: 30
+    AutoPublishAlias: live
+    Tracing: Active
+    Environment:
+      Variables: {}
+    DeploymentPreference:
+      Enabled: Ref DeploymentEnabled
+      Type: !Ref DeploymentPreferenceType
+      Alarms:
+        - !Ref FunctionErrorsAlarm
+        - !Ref FunctionErrorsLatestVersionAlarm
+    Tags: {}
+
+Resources:
+  Function:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.handler
+      Description: ""
+      CodeUri: "./src"
+      Policies:
+        - AWSLambdaExecute
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - logs:DescribeLogGroups
+                - logs:PutRetentionPolicy
+              Resource: "*"
+      Environment:
+        Variables: {}
+
+  FunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${Function}"
+      RetentionInDays: !Ref LogRetentionInDays
+
+  FunctionErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/Lambda
+      AlarmDescription: !Sub "ALARM: Lambda Function ${Function} has errors"
+      AlarmActions: !Ref AlarmActions
+      MetricName: Errors
+      Statistic: Sum
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref Function
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+
+  FunctionErrorsLatestVersionAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/Lambda
+      AlarmDescription: !Sub "ALARM: Lambda Function ${Function} has errors"
+      AlarmActions: !Ref AlarmActions
+      MetricName: Errors
+      Statistic: Sum
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref Function
+        - Name: ExecutedVersion
+          Value: !GetAtt Function.Version.Version
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+
+  EventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: ""
+      State: ENABLED
+      ScheduleExpression: rate(30 minutes)
+      Targets:
+        - Id: V1
+          Arn: !GetAtt Function.Arn
+          Input: !Sub |
+            {
+              "logRetentionInDays": ${LogRetentionInDays},
+              "logGroupNamePrefix": "${LogGroupNamePrefix}"
+            }
+
+  FunctionInvokePermissionForEventRule:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Function
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt EventRule.Arn
+
+  EventRuleFailedInvocationsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/Lambda
+      AlarmDescription: !Sub "ALARM: Event Rule ${EventRule} failed to invoke"
+      AlarmActions: !Ref AlarmActions
+      MetricName: FailedInvocations
+      Statistic: Sum
+      Dimensions:
+        - Name: RuleName
+          Value: !Ref EventRule
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+
+  EventRuleThrottledRulesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/Lambda
+      AlarmDescription: !Sub "ALARM: Event Rule ${EventRule} is being throttled"
+      AlarmActions: !Ref AlarmActions
+      MetricName: ThrottledRules
+      Statistic: Sum
+      Dimensions:
+        - Name: RuleName
+          Value: !Ref EventRule
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+
+Outputs:
+  FunctionName:
+    Value: !Ref Function
+    Export:
+      Name: "sar:cloudwatch-logs-retention:FunctionName"
+  FunctionArn:
+    Value: !GetAtt Function.Arn
+    Export:
+      Name: "sar:cloudwatch-logs-retentionp:FunctionArn"

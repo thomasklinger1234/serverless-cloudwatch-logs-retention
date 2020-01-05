@@ -1,0 +1,25 @@
+---
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.7
+    commands:
+      - pip install -r requirements.txt
+      - pip install -r requirements.dev.txt
+  pre_build:
+    commands:
+      - pytest tests
+  build:
+    commands: []
+  post_build:
+    commands: []
+
+artifacts:
+  files: []
+  discard-paths: yes
+
+cache:
+  paths:
+    - '/root/.m2/**/*'
