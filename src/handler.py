@@ -21,7 +21,7 @@ class LambdaHandler(LoggingMixin):
         super().__init__()
         self.session = session or boto3.Session()
         self.default_retention_in_days = 30
-        self.default_log_group_prefix = ""
+        self.default_log_group_prefix = "/"
 
     def handle_request(event, context):
         self.logger.info("received event [{}]".format(event))
